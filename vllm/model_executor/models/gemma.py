@@ -321,9 +321,6 @@ class GemmaForCausalLM(nn.Module):
         loaded_params = set()
         for name, loaded_weight in hf_model_weights_iterator(
                 model_name_or_path, cache_dir, load_format, revision):
-            # lcw
-            if name == "lm_head.weight":
-                continue
             for (param_name, shard_name, shard_id) in stacked_params_mapping:
                 if shard_name not in name:
                     continue
@@ -336,6 +333,9 @@ class GemmaForCausalLM(nn.Module):
                 weight_loader(param, loaded_weight, shard_id)
                 break
             else:
+                # lcw
+                if name == "lm_head.weight":
+                    continue
                 # Skip loading extra bias for GPTQ models.
                 if name.endswith(".bias") and name not in params_dict:
                     continue
