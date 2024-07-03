@@ -1,16 +1,18 @@
 import pytest
 
-from vllm.sequence import (SamplerOutput, SequenceData, SequenceGroupOutput,
-                           SequenceOutput)
+from vllm.sequence import (CompletionSequenceGroupOutput, SamplerOutput,
+                           SequenceData, SequenceOutput)
+
+from .core.utils import create_dummy_prompt
 
 
 @pytest.fixture
 def sample_outputs():
     return [
-        SequenceGroupOutput(samples=[
+        CompletionSequenceGroupOutput(samples=[
             SequenceOutput(parent_seq_id=0, output_token=i, logprobs={})
         ],
-                            prompt_logprobs=None) for i in range(5)
+                                      prompt_logprobs=None) for i in range(5)
     ]
 
 
@@ -31,10 +33,10 @@ def test_sampler_output_getitem(sampler_output, sample_outputs):
 
 
 def test_sampler_output_setitem(sampler_output):
-    new_output = SequenceGroupOutput(samples=[
+    new_output = CompletionSequenceGroupOutput(samples=[
         SequenceOutput(parent_seq_id=0, output_token=99, logprobs={})
     ],
-                                     prompt_logprobs=None)
+                                               prompt_logprobs=None)
     sampler_output[2] = new_output
     assert sampler_output[2] == new_output
 
@@ -67,6 +69,29 @@ def test_sequence_data_prefill():
 
     # append tokens and reset, simulating recompute
     seq_data.append_token_id(1, logprob=0.0)
-    seq_data.reset_num_computed_tokens()
+    seq_data.reset_state_for_recompute()
     assert seq_data.get_num_uncomputed_tokens() == 5
     assert seq_data.get_num_computed_tokens() == 0
+
+
+def test_sequence_group_stage():
+    _, seq_group = create_dummy_prompt("1", 12)
+    assert seq_group.is_prefill() is True
+    seq_group.update_num_computed_tokens(6)
+    assert seq_group.is_prefill() is True
+    seq_group.update_num_computed_tokens(5)
+    assert seq_group.is_prefill() is True
+    seq_group.update_num_computed_tokens(1)
+    assert seq_group.is_prefill() is False
+    seqs = seq_group.get_seqs()
+    assert len(seqs) == 1
+    seqs[0].data.append_token_id(1, logprob=0.0)
+    for seq in seq_group.get_seqs():
+        seq.reset_state_for_recompute()
+    assert seq_group.is_prefill() is True
+    seq_group.update_num_computed_tokens(5)
+    assert seq_group.is_prefill() is True
+    seq_group.update_num_computed_tokens(7)
+    assert seq_group.is_prefill() is True
+    seq_group.update_num_computed_tokens(1)
+    assert seq_group.is_prefill() is False

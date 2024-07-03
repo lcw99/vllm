@@ -4,7 +4,7 @@ vLLM provides an HTTP server that implements OpenAI's [Completions](https://plat
 
 You can start the server using Python, or using [Docker](deploying_with_docker.rst):
 ```bash
-python -m vllm.entrypoints.openai.api_server --model meta-llama/Llama-2-7b-hf --dtype float32 --api-key token-abc123
+python -m vllm.entrypoints.openai.api_server --model NousResearch/Meta-Llama-3-8B-Instruct --dtype auto --api-key token-abc123
 ```
 
 To call the server, you can use the official OpenAI Python client library, or any other HTTP client.
@@ -16,9 +16,8 @@ client = OpenAI(
 )
 
 completion = client.chat.completions.create(
-  model="meta-llama/Llama-2-7b-hf",
+  model="NousResearch/Meta-Llama-3-8B-Instruct",
   messages=[
-    {"role": "system", "content": "You are a helpful assistant."},
     {"role": "user", "content": "Hello!"}
   ]
 )
@@ -31,6 +30,8 @@ Please see the [OpenAI API Reference](https://platform.openai.com/docs/api-refer
 - Chat: `tools`, and `tool_choice`.
 - Completions: `suffix`.
 
+vLLM also provides experimental support for OpenAI Vision API compatible inference. See more details in [Using VLMs](../models/vlm.rst).
+
 ## Extra Parameters
 vLLM supports a set of parameters that are not part of the OpenAI API.
 In order to use them, you can pass them as extra parameters in the OpenAI client.
@@ -38,9 +39,8 @@ Or directly merge them into the JSON payload if you are using HTTP call directly
 
 ```python
 completion = client.chat.completions.create(
-  model="meta-llama/Llama-2-7b-hf",
+  model="NousResearch/Meta-Llama-3-8B-Instruct",
   messages=[
-    {"role": "system", "content": "You are a helpful assistant."},
     {"role": "user", "content": "Classify this sentiment: vLLM is wonderful!"}
   ],
   extra_body={
@@ -89,7 +89,7 @@ In order for the language model to support chat protocol, vLLM requires the mode
 a chat template in its tokenizer configuration. The chat template is a Jinja2 template that
 specifies how are roles, messages, and other chat-specific tokens are encoded in the input.
 
-An example chat template for `meta-llama/Llama-2-7b-chat-hf` can be found [here](https://huggingface.co/meta-llama/Llama-2-7b-chat-hf/blob/09bd0f49e16738cdfaa6e615203e126038736eb0/tokenizer_config.json#L12)
+An example chat template for `NousResearch/Meta-Llama-3-8B-Instruct` can be found [here](https://github.com/meta-llama/llama3?tab=readme-ov-file#instruction-tuned-models)
 
 Some models do not provide a chat template even though they are instruction/chat fine-tuned. For those model,
 you can manually specify their chat template in the `--chat-template` parameter with the file path to the chat
@@ -110,5 +110,16 @@ directory [here](https://github.com/vllm-project/vllm/tree/main/examples/)
 ```{argparse}
 :module: vllm.entrypoints.openai.cli_args
 :func: make_arg_parser
-:prog: vllm-openai-server
+:prog: -m vllm.entrypoints.openai.api_server
 ```
+
+## Tool calling in the chat completion API
+vLLM supports only named function calling in the chat completion API. The `tool_choice` options `auto` and `required` are **not yet supported** but on the roadmap.
+
+To use a named function you need to define the function in the `tools` parameter and call it in the `tool_choice` parameter. 
+
+It is the callers responsibility to prompt the model with the tool information, vLLM will not automatically manipulate the prompt. **This may change in the future.**
+
+vLLM will use guided decoding to ensure the response matches the tool parameter object defined by the JSON schema in the `tools` parameter.
+
+Please refer to the OpenAI API reference documentation for more information.
