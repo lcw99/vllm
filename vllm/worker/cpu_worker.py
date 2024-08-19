@@ -4,10 +4,11 @@ from typing import Dict, List, Optional, Tuple
 import torch
 import torch.distributed
 
+import vllm.envs as envs
 from vllm.attention import get_attn_backend
 from vllm.config import (CacheConfig, DeviceConfig, LoadConfig, LoRAConfig,
-                         ModelConfig, ParallelConfig, SchedulerConfig,
-                         VisionLanguageConfig)
+                         ModelConfig, ParallelConfig, PromptAdapterConfig,
+                         SchedulerConfig)
 from vllm.distributed import (ensure_model_parallel_initialized,
                               init_distributed_environment)
 from vllm.logger import init_logger
@@ -131,8 +132,8 @@ class CPUWorker(LoraNotSupportedWorkerBase, LocalOrDistributedWorkerBase):
         rank: int,
         distributed_init_method: str,
         lora_config: Optional[LoRAConfig] = None,
-        vision_language_config: Optional[VisionLanguageConfig] = None,
         kv_cache_dtype: Optional[str] = "auto",
+        prompt_adapter_config: Optional[PromptAdapterConfig] = None,
         is_driver_worker: bool = False,
     ) -> None:
         self.model_config = model_config
@@ -145,7 +146,7 @@ class CPUWorker(LoraNotSupportedWorkerBase, LocalOrDistributedWorkerBase):
         self.rank = rank
         self.distributed_init_method = distributed_init_method
         self.lora_config = lora_config
-        self.vision_language_config = vision_language_config
+        self.prompt_adapter_config = prompt_adapter_config
         self.is_driver_worker = is_driver_worker
         if self.is_driver_worker:
             assert self.rank == 0, "The driver worker must have rank 0."
@@ -154,6 +155,14 @@ class CPUWorker(LoraNotSupportedWorkerBase, LocalOrDistributedWorkerBase):
             # note: lazy import to avoid importing torch before initializing
             from vllm.utils import init_cached_hf_modules
             init_cached_hf_modules()
+
+        # Setup OpenMP threads affinity.
+        omp_cpuids = envs.VLLM_CPU_OMP_THREADS_BIND
+        if omp_cpuids == "all":
+            self.local_omp_cpuid = "all"
+        else:
+            self.local_omp_cpuid = omp_cpuids.split("|")[rank]
+
         self.model_runner: CPUModelRunner = CPUModelRunner(
             model_config,
             parallel_config,
@@ -162,8 +171,8 @@ class CPUWorker(LoraNotSupportedWorkerBase, LocalOrDistributedWorkerBase):
             cache_config,
             load_config=self.load_config,
             lora_config=self.lora_config,
-            vision_language_config=self.vision_language_config,
             kv_cache_dtype=kv_cache_dtype,
+            prompt_adapter_config=self.prompt_adapter_config,
             is_driver_worker=is_driver_worker)
         # Uninitialized cache engine. Will be initialized by
         # initialize_cache.
@@ -171,6 +180,9 @@ class CPUWorker(LoraNotSupportedWorkerBase, LocalOrDistributedWorkerBase):
         self.cpu_cache: List[List[torch.Tensor]]
 
     def init_device(self) -> None:
+        if self.local_omp_cpuid != "all":
+            torch.ops._C_utils.init_cpu_threads_env(self.local_omp_cpuid)
+
         self.init_distributed_environment()
         # Set random seed.
         set_random_seed(self.model_config.seed)

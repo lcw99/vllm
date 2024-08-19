@@ -1,4 +1,4 @@
-from typing import List, Mapping, NamedTuple, Optional, Tuple
+from typing import List, NamedTuple, Optional, Tuple
 
 import openvino as ov
 import torch
@@ -7,12 +7,12 @@ from torch import nn
 from vllm.attention import get_attn_backend
 from vllm.attention.backends.openvino import OpenVINOAttentionMetadata
 from vllm.config import (CacheConfig, DeviceConfig, LoadConfig, LoRAConfig,
-                         ModelConfig, ParallelConfig, SchedulerConfig,
-                         VisionLanguageConfig)
+                         ModelConfig, MultiModalConfig, ParallelConfig,
+                         SchedulerConfig)
 from vllm.logger import init_logger
 from vllm.model_executor import SamplingMetadata
 from vllm.model_executor.model_loader.openvino import get_model
-from vllm.multimodal import (MULTIMODAL_REGISTRY, BatchedTensors,
+from vllm.multimodal import (MULTIMODAL_REGISTRY, BatchedTensorInputs,
                              MultiModalInputs)
 from vllm.sequence import SamplerOutput, SequenceGroupMetadata
 
@@ -25,7 +25,7 @@ class ModelInput(NamedTuple):
     attn_metadata: Optional[OpenVINOAttentionMetadata]
     seq_lens: List[int]
     query_lens: List[int]
-    multi_modal_kwargs: Mapping[str, BatchedTensors]
+    multi_modal_kwargs: BatchedTensorInputs
 
     @classmethod
     def empty(cls, device):
@@ -48,7 +48,7 @@ class OpenVINOModelRunner:
         cache_config: CacheConfig,
         load_config: LoadConfig,
         lora_config: Optional[LoRAConfig],
-        vision_language_config: Optional[VisionLanguageConfig],
+        multimodal_config: Optional[MultiModalConfig],
         kv_cache_dtype: Optional[str] = "auto",
         is_driver_worker: bool = False,
         *args,
@@ -60,7 +60,7 @@ class OpenVINOModelRunner:
         self.device_config = device_config
         self.cache_config = cache_config
         self.lora_config = lora_config
-        self.vision_language_config = vision_language_config
+        self.multimodal_config = multimodal_config
         self.load_config = load_config
         self.is_driver_worker = is_driver_worker
 
@@ -265,8 +265,7 @@ class OpenVINOModelRunner:
             max_context_len=max_context_len_tensor,
         )
 
-        multi_modal_kwargs = MultiModalInputs.batch(multi_modal_inputs_list,
-                                                    device=self.device)
+        multi_modal_kwargs = MultiModalInputs.batch(multi_modal_inputs_list)
 
         return ModelInput(
             input_tokens,
@@ -281,7 +280,7 @@ class OpenVINOModelRunner:
         self,
         seq_group_metadata_list: List[SequenceGroupMetadata],
     ) -> Tuple[torch.Tensor, torch.Tensor, OpenVINOAttentionMetadata,
-               SamplingMetadata, Mapping[str, BatchedTensors]]:
+               SamplingMetadata, BatchedTensorInputs]:
         # Prepare input tensors.
         (
             input_tokens,
@@ -324,11 +323,16 @@ class OpenVINOModelRunner:
 
         model_executable = self.model
         execute_model_kwargs = {
-            "input_ids": input_tokens,
-            "positions": input_positions,
-            "kv_caches": kv_caches,
-            "attn_metadata": attn_metadata,
-            **(multi_modal_kwargs or {}),
+            "input_ids":
+            input_tokens,
+            "positions":
+            input_positions,
+            "kv_caches":
+            kv_caches,
+            "attn_metadata":
+            attn_metadata,
+            **MultiModalInputs.as_kwargs(multi_modal_kwargs or {},
+                                         device=self.device),
         }
 
         hidden_states = model_executable(**execute_model_kwargs)
